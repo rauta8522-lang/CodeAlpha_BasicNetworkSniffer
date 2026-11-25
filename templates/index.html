@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Network Packet Sniffer — Live Monitor</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --card: #121a30;
+      --border: #233054;
+      --text: #e6ecff;
+      --muted: #93a3c8;
+      --tcp: #22c55e;
+      --udp: #38bdf8;
+      --icmp: #facc15;
+      --other: #c084fc;
+      --accent: #6366f1;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Segoe UI", system-ui, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 24px; }
+    .container { max-width: 1150px; margin: 0 auto; }
+    header {
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+      gap: 12px; margin-bottom: 22px; padding-bottom: 14px; border-bottom: 1px solid var(--border);
+    }
+    .title h1 { font-size: 1.5rem; letter-spacing: 0.3px; }
+    .title p { color: var(--muted); font-size: 0.9rem; margin-top: 4px; }
+    .badge-live {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(34, 197, 94, 0.4);
+      color: #86efac; padding: 6px 14px; border-radius: 999px; font-size: 0.85rem; font-weight: 600;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tcp); animation: pulse 1.4s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+    }
+    .card .label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.6px; }
+    .card .value { font-size: 1.7rem; font-weight: 700; margin-top: 6px; }
+
+    .toolbar {
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+      gap: 10px; margin-bottom: 14px;
+    }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      background: var(--card); color: var(--text); border: 1px solid var(--border);
+      padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; transition: 0.15s;
+    }
+    button:hover { border-color: var(--accent); }
+    button.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+    .table-wrap {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto;
+    }
+    table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { padding: 11px 14px; text-align: left; border-bottom: 1px solid rgba(35, 48, 84, 0.65); white-space: nowrap; }
+    th { background: #0e1528; color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
+    tr:hover { background: rgba(99, 102, 241, 0.08); }
+
+    .proto {
+      display: inline-block; padding: 3px 9px; border-radius: 6px; font-weight: 700; font-size: 0.75rem;
+    }
+    .p-TCP { background: rgba(34, 197, 94, 0.16); color: #86efac; }
+    .p-UDP { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; }
+    .p-ICMP { background: rgba(250, 204, 21, 0.16); color: #fde047; }
+    .p-OTHER { background: rgba(192, 132, 252, 0.16); color: #d8b4fe; }
+
+    .payload { font-family: Consolas, monospace; color: var(--muted); font-size: 0.8rem; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title">
+        <h1>Network Packet Sniffer</h1>
+        <p>Real-time packet inspection — Source &amp; Destination IP, Ports, Protocol, and Payload</p>
+      </div>
+      <div class="badge-live"><span class="dot"></span> Live Capture</div>
+    </header>
+
+    <div class="grid">
+      <div class="card"><div class="label">Total Packets</div><div class="value" id="c-total">0</div></div>
+      <div class="card"><div class="label">TCP (Web/TLS)</div><div class="value" style="color:var(--tcp)" id="c-TCP">0</div></div>
+      <div class="card"><div class="label">UDP (DNS/Media)</div><div class="value" style="color:var(--udp)" id="c-UDP">0</div></div>
+      <div class="card"><div class="label">ICMP (Ping)</div><div class="value" style="color:var(--icmp)" id="c-ICMP">0</div></div>
+    </div>
+
+    <div class="toolbar">
+      <div class="filters">
+        <button class="active" onclick="setFilter('ALL', this)">All</button>
+        <button onclick="setFilter('TCP', this)">TCP</button>
+        <button onclick="setFilter('UDP', this)">UDP</button>
+        <button onclick="setFilter('ICMP', this)">ICMP</button>
+      </div>
+      <div class="filters">
+        <button id="pauseBtn" onclick="togglePause()">Pause</button>
+        <button onclick="clearTable()">Clear</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Protocol</th>
+            <th>Source IP</th>
+            <th>Destination IP</th>
+            <th>Ports</th>
+            <th>Size</th>
+            <th>Payload Preview</th>
+          </tr>
+        </thead>
+        <tbody id="pktBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let activeFilter = "ALL";
+    let paused = false;
+    const rows = [];
+
+    function setFilter(proto, btn) {
+      activeFilter = proto;
+      document.querySelectorAll(".filters button").forEach(b => {
+        if (["All", "TCP", "UDP", "ICMP"].includes(b.textContent)) b.classList.remove("active");
+      });
+      btn.classList.add("active");
+      renderRows();
+    }
+
+    function togglePause() {
+      paused = !paused;
+      document.getElementById("pauseBtn").textContent = paused ? "Resume" : "Pause";
+    }
+
+    function clearTable() {
+      rows.length = 0;
+      renderRows();
+    }
+
+    function updateStats(s) {
+      document.getElementById("c-total").textContent = s.total ?? 0;
+      document.getElementById("c-TCP").textContent = s.TCP ?? 0;
+      document.getElementById("c-UDP").textContent = s.UDP ?? 0;
+      document.getElementById("c-ICMP").textContent = s.ICMP ?? 0;
+    }
+
+    function renderRows() {
+      const tbody = document.getElementById("pktBody");
+      const filtered = activeFilter === "ALL" ? rows : rows.filter(r => r.proto === activeFilter);
+      tbody.innerHTML = filtered.slice(0, 80).map(p => {
+        const ports = (p.sport && p.dport) ? `${p.sport} → ${p.dport}` : "—";
+        return `
+          <tr>
+            <td>${p.time}</td>
+            <td><span class="proto p-${p.proto}">${p.proto}</span></td>
+            <td>${p.src}</td>
+            <td>${p.dst}</td>
+            <td>${ports}</td>
+            <td>${p.length} B</td>
+            <td class="payload" title="${escapeHtml(p.payload)}">${escapeHtml(p.payload || "—")}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, m => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[m]));
+    }
+
+    const evtSource = new EventSource("/stream");
+    evtSource.onmessage = (event) => {
+      if (paused) return;
+      const payload = JSON.parse(event.data);
+      if (payload.stats) updateStats(payload.stats);
+      if (payload.packet) {
+        rows.unshift(payload.packet);
+        if (rows.length > 200) rows.pop();
+        renderRows();
+      }
+    };
+  </script>
+</body>
+</html>
